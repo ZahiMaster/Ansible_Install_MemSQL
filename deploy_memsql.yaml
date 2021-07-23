@@ -1,0 +1,16 @@
+---
+- hosts: memsql
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Setup disks
+      include_role:
+        name: disks-setup
+      when: dedicated_fs == true
+  tags: disks-setup
+  
+- hosts: memsql
+  gather_facts: true
+  become: true
+  roles: 
+    - memsql

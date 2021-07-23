@@ -1,0 +1,12 @@
+[Unit]
+Description=MemSQL Studio
+Documentation=https://docs.singlestore.com/studio-redir/systemd
+
+[Service]
+User=memsql
+Group=memsql
+ExecStart=/usr/bin/memsql-studio
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

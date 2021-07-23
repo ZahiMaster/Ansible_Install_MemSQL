@@ -1,0 +1,9 @@
+---
+- import_tasks: memsql-preconfig.yml
+  tags: preconfig
+- import_tasks: memsql-InstallCluster.yml
+  tags: install_cluster
+- import_tasks: config-memsql-studio.yml
+  tags: studio
+  when: config_memsql == True
+...

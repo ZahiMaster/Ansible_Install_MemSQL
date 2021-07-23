@@ -1,0 +1,316 @@
+---
+- name: Test grub file
+  shell: grep -cE transparent_hugepage=never /etc/default/grub || true
+  register: teste
+
+- name: Test MemSQL FD and Max Proc limits
+  shell: grep -cE "{{ memsql.user }}.*NOFILE|{{ memsql.user }}.*nproc" /etc/security/limits.conf || true
+  register: test_memsql_limits
+  changed_when: false
+
+- name: Test boot BIOS or UEFI
+  shell: "[ -d /sys/firmware/efi ] && false || true"
+  register: test_boot_mode
+  changed_when: false
+
+- name: create MemSQL system group | Group {{ memsql.group }}
+  group:
+    name: "{{ memsql.group }}"
+    state: present
+  when: memsql.group != "root"
+
+- name: create MemSQL Admin system group | Group {{ memsql.admin }}
+  group:
+    name: "{{ memsql.admin }}"
+    state: present
+  when: memsql.group != "root"
+
+- name: create MemSQL user | User {{ memsql.user }}
+  user:
+    name: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+    home: "{{ memsql.home }}"
+    shell: /sbin/nologin
+    state: present
+  when: memsql.user != "root"
+  failed_when: memsql.user == "root" and memsql.group == "root"
+
+- name: create MemSQL Admin user | User {{ memsql.admin }}
+  user:
+    name: "{{ memsql.admin }}"
+    password: "{{ memsql.admin_password | password_hash('sha512') }}"
+    group: "{{ memsql.admin }}"
+    home: "{{ memsql.admin_home }}"
+    shell: /bin/bash
+    state: present
+  when: memsql.user != "root"
+  failed_when: memsql.user == "root" and memsql.group == "root"
+
+- name: Add MemSQL Admin user to MemSQL group
+  user:
+    name: "{{ memsql.admin }}"
+    groups: "{{ memsql.admin }}, {{ memsql.group }}"
+    append: yes
+
+- name: create MemSQL home directory
+  file:
+    path: "{{ memsql.home }}"
+    state: directory
+
+- name: Mount up device where MemSQL will be installed
+  mount:
+    path: "{{ memsql.home }}"
+    src: "{{ disk_path }}"
+    fstype: "{{ filesystem_type }}"
+    state: mounted
+  when: dedicated_fs == true
+
+- name: Correct MemSQL home directory ownership
+  file:
+    path: "{{ memsql.home }}"
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+    state: directory
+    mode: '0750'
+
+- name: Create MemSQL Admin SSH Dir
+  file:
+    path: "{{ memsql.admin_home }}/.ssh"
+    owner: "{{ memsql.admin }}"
+    group: "{{ memsql.admin }}"
+    state: directory
+    mode: '0700'
+
+- name: Generate MemSQL Admin SSH Key
+  openssh_keypair:
+    path: "$PWD/roles/memsql/files/id_rsa_memsql"
+    type: rsa
+    size: 4096
+    state: present
+  register: ssh_key_check
+  failed_when: ssh_key_check.skipped is defined
+  delegate_to: localhost
+  run_once: true
+
+- name: Change Keys permissions
+  file:
+    path: "{{ item }}"
+    mode: '0644'
+  with_items:
+    - "$PWD/roles/memsql/files/id_rsa_memsql.pub"
+    - "$PWD/roles/memsql/files/id_rsa_memsql"
+  delegate_to: localhost
+  run_once: true
+
+- name: Gather MemSQL SSH Key content
+  shell: "cat $PWD/roles/memsql/files/id_rsa_memsql.pub"
+  register: ssh_key
+  delegate_to: localhost
+  changed_when: false
+  run_once: true
+
+- name: Copy SSH Key to Aggregator nodes
+  become: true
+  copy:
+    src: "{{ item }}"
+    dest: "{{ memsql.admin_home }}/.ssh"
+    owner: "{{ memsql.admin }}"
+    group: "{{ memsql.admin }}"
+    mode: '0600'
+  with_items:
+    - "id_rsa_memsql.pub"
+    - "id_rsa_memsql"
+  when: inventory_hostname in groups['aggregator']
+
+- name: Apply public keys
+  authorized_key:
+    user: "{{ memsql.admin }}"
+    key: "{{ ssh_key.stdout }}"
+    state: present
+
+- name: Disable selinux
+  selinux:
+    state: disabled
+
+- name: Disable and stop firewalld
+  systemd:
+    name: firewalld
+    state: stopped
+    enabled: no
+
+- name: create MemSQL Master cluster file dir
+  file:
+    path: "{{ memsql.home }}/cluster"
+    state: directory
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+    mode: '0775'
+  when: inventory_hostname == groups['aggregator'][0]
+
+- name: create MemSQL Aggregator nodes dir
+  file:
+    path: "{{ memsql.home }}/packages"
+    state: directory
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+    mode: '0755'
+  when: inventory_hostname in groups['aggregator'] and offline_install == true
+
+- name: create MemSQL SSL directories
+  file:
+    path: "{{ memsql.home }}/ssl"
+    state: directory
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+    mode: '0775'
+  when: inventory_hostname in groups['aggregator'] and ssl == true
+
+- name: Copy SSL certificates and keys pt1
+  copy:
+    src: "{{ item }}"
+    dest: "{{ memsql.home }}/ssl"
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+  with_items:
+    - "{{ cert_file }}"
+    - "{{ cert_key }}"
+  when: inventory_hostname in groups['aggregator'] and ssl == true
+
+- name: Copy SSL certificates and keys pt2
+  copy:
+    src: "{{ ca_cert_file }}"
+    dest: "{{ memsql.home }}/ssl"
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+  when: inventory_hostname in groups['aggregator'] and ssl == true and ssl_ca == true
+
+- name: Register MemSQL packages
+  find:
+    paths: "$PWD/roles/memsql/files/"
+    patterns: "*.rpm"
+  delegate_to: localhost
+  register: target_files
+  when: offline_install == true
+
+- name: Copy MemSQL packages
+  copy:
+    src: "{{ item.path }}"
+    dest: "{{ memsql.home }}/packages"
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+  with_items: "{{ target_files.files }}"
+  when: inventory_hostname in groups['aggregator'] and offline_install == true
+
+- name: Register MemSQL packages
+  find:
+    paths: "{{ memsql.home }}/packages"
+    patterns: "*.rpm"
+    excludes: "memsql-server*.rpm"
+  register: memsql_packages
+  when: inventory_hostname in groups['aggregator'] and offline_install == true
+
+- name: Install MemSQL packages
+  yum:
+    name: "{{ item.path }}"
+    state: present
+  with_items: "{{ memsql_packages.files }}"
+  when: inventory_hostname in groups['aggregator'] and offline_install == true
+
+- name: Give sudo privileges to MemSQL user for cluster deployment
+  lineinfile:
+    path: /etc/sudoers
+    line: "{{ memsql.admin }} ALL=(ALL) NOPASSWD: ALL"
+    state: present
+
+- name: Increase Network RW Buffer size
+  sysctl:
+    name: "{{ item }}"
+    value: "8388608"
+    state: present
+  with_items:
+    - net.core.rmem_max
+    - net.core.wmem_max
+
+- name: Increase Max map count
+  sysctl:
+    name: vm.max_map_count
+    value: "1000000000"
+    state: present
+
+- name: Increase fs.file-max
+  sysctl:
+    name: fs.file-max
+    value: "1024000"
+    state: present
+
+- name: Calculate memory value for OS min free
+  shell: "free -k|grep Mem|awk '{print $2/100+128}'|sed 's/\\..*//g'"
+  register: min_free
+  changed_when: false
+
+- name: Set minimum OS free memory
+  sysctl:
+    name: vm.min_free_kbytes
+    value: "{{ min_free.stdout }}"
+    state: present
+
+- name: Increase file descriptors and max processes limits
+  lineinfile:
+    path: /etc/security/limits.conf
+    line: "{{ item }}"
+  when: test_memsql_limits.stdout == "0"
+  loop:
+    - "{{ memsql.user }}  soft  NOFILE  1024000"
+    - "{{ memsql.user }}  hard  NOFILE  1024000"
+    - "{{ memsql.user }}  soft  nproc   128000"
+    - "{{ memsql.user }}  hard  nproc   128000"
+  register: chg_limits
+
+- name: Change nice limit to allow SingleStore DB engine to run some threads at highers priority
+  lineinfile:
+    path: /etc/security/limits.conf
+    line: "memsql    -    nice    -10"
+
+- name: Install dependencies
+  yum:
+    name: [ 'numactl' ]
+    state: present
+  ignore_errors: yes
+
+
+- name: Change Grub config to disable Transparent Huge Pages on Boot
+  replace:
+    path: /etc/default/grub
+    regexp: 'quiet'
+    replace: quiet transparent_hugepage=never intel_pstate=disable cgroup_disable=memory
+  register: thp_disable
+  when: teste.stdout == "0"
+
+- name: Rebuild grub configuration
+  shell: "grub2-mkconfig -o /boot/grub2/grub.cfg"
+  register: grub_rebuild
+  when: thp_disable.changed
+
+- name: Reboot to apply chages
+  shell: "sleep 5 && reboot"
+  async: 10
+  poll: 0
+  when: grub_rebuild.changed or chg_limits.changed
+  changed_when: false
+
+- name: Wait for the system to reboot
+  wait_for_connection:
+    connect_timeout: 10
+    sleep: 5
+    delay: 45
+    timeout: 600
+  when: grub_rebuild.changed or chg_limits.changed
+
+- name: Validate if booted with THP disabled
+  shell: "grep -c 'transparent_hugepage=never intel_pstate=disable cgroup_disable=memory' /proc/cmdline"
+  register: test_grub_rebuild
+  changed_when: false
+  when: grub_rebuild.changed or chg_limits.changed
+  failed_when: test_grub_rebuild.stdout != "1"
+
+...

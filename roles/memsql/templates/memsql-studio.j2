@@ -1,0 +1,13 @@
+# This is the IP address that MemSQL Studio will bind to.
+host = "{{ bindStudio }}"
+# This is the port that MemSQL Studio will bind to.
+port = {{ portStudio }}
+# This is the path to the state file of MemSQL Studio.
+statePath = "{{ statePath }}"
+# This is the path to the log file of MemSQL Studio.
+logPath = "{{ logPath }}"
+
+{% if ssl == true %}
+HTTPSCertificateFile = "{{ memsql.home }}/ssl/{{ cert_file }}"
+HTTPSCertificateKeyFile = "{{ memsql.home }}/ssl/{{ cert_key }}"
+{% endif %}

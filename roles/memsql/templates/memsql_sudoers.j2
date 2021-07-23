@@ -1,0 +1,6 @@
+# MemSQL Admin sudo privileges
+
+Cmnd_Alias MEMSQL = /usr/bin/systemctl stop memsql, /usr/bin/systemctl start memsql, /usr/bin/systemctl restart memsql, /usr/bin/memsqlctl, /usr/bin/memsql-admin, /usr/bin/memsql-deploy, /usr/bin/memsql_exporter, /usr/bin/memsql_pusher, /usr/bin/memsql-report, /usr/bin/memsql-toolbox-config, /usr/bin/memsql-studio, /bin/sh, /usr/bin/id
+
+{{ memsql.admin }} ALL= NOPASSWD: MEMSQL
+

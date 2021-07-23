@@ -1,0 +1,72 @@
+---
+
+- name: add /etc/hosts entry
+  blockinfile:
+    path: /etc/hosts
+    block: |
+      172.16.1.220            memsql1
+      172.16.1.221            memsql2
+      172.16.1.222            memsql3
+
+
+- name: install dependencies
+  package:
+    name: parted
+    state: present
+
+- name: create partitions on devices
+  parted:
+    device: "{{ item }}"
+    number: 1
+    part_type: primary
+    flags: [ lvm ]
+    state: present
+  with_items:
+    - "{{ os_devices }}"
+
+- name: get partitioned devices
+  set_fact:
+    partitioned_devices: "{{ os_devices | map('regex_replace','$','1') | list }}"
+
+- name: concatenate devices
+  set_fact:
+    pvs_devices: "{{ partitioned_devices | join(',') }}"
+
+- name: get current vg pvs
+  shell: "pvs|grep {{ vg_name }}|awk '{print $1}'|tr '\n' ','|sed 's/,$//g'"
+  changed_when: false
+  register: vg_pvs
+
+- debug:
+    msg: "{{ pvs_devices }},{{ vg_pvs }}"
+
+- name: add devices to volume group | {{ vg_name }}
+  lvg:
+    vg: "{{ vg_name }}"
+    pvs: "{{ pvs_devices }},{{ vg_pvs }}"
+  register: vg_extend
+  when: new_vg == false
+
+- debug:
+    msg: "{{ pvs_devices }}"
+
+- name: add devices to volume group | {{ vg_name }}
+  lvg:
+    vg: "{{ vg_name }}"
+    pvs: "{{ pvs_devices }}"
+  register: vg_extend
+  when: new_vg == true
+
+- name: create a new logical volume
+  lvol:
+    vg: "{{ vg_name }}"
+    lv: "{{ lv_name }}"
+    size: 90%FREE
+  when: vg_extend.changed
+
+- name: create {{ filesystem_type }} filesystem on {{ memsql_disk_path }}
+  filesystem:
+    fstype: "{{ filesystem_type }}"
+    dev: "{{ disk_path }}"
+
+...

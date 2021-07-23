@@ -1,0 +1,2 @@
+---
+- import_tasks: disk-setup.yml

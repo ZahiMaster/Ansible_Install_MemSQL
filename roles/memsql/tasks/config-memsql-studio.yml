@@ -1,0 +1,24 @@
+---
+
+- name: Copy MemSQL-Studio service
+  copy:
+    src: "memsql-studio.service"
+    dest: "/etc/systemd/system/memsql-studio.service"
+  when: inventory_hostname in groups['aggregator'][0]
+
+- name: Copy MemSQL-Studio.j2 to hcl file
+  template:
+    src: "memsql-studio.j2"
+    dest: "/etc/memsql/memsql-studio.hcl"
+    mode: '664'
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+  when: inventory_hostname in groups['aggregator'][0]
+
+- name: Enable MemSQL-Studio Service
+  systemd:
+    name: "memsql-studio.service"
+    enabled: yes
+    daemon_reload: yes
+    state: started
+  when: inventory_hostname in groups['aggregator'][0]
