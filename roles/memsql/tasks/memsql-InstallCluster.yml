@@ -1,0 +1,167 @@
+---
+
+- name: Add MemSQL repo
+  shell: "yum-config-manager --add-repo https://release.memsql.com/production/rpm/x86_64/repodata/memsql.repo"
+  changed_when: false
+  when: offline_install == false and inventory_hostname in groups['aggregator']
+
+- name: Install MemSQL packages
+  yum:
+    name: [ 'memsql-client, memsql-toolbox, memsql-studio' ]
+    state: present
+  when: offline_install == false and inventory_hostname in groups['aggregator']
+
+- name: Generate cluster configuration YAML
+  template:
+    src: cluster-config.yaml.j2
+    dest: "{{ memsql.home }}/cluster/cluster-config.yaml"
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+    mode: 0644
+  when: inventory_hostname == groups['aggregator'][0]
+
+- name: Check Cluster Port
+  shell: ss -tln | grep -cE 3306 || true
+  register: cluster_port
+  ignore_errors: true
+  when: inventory_hostname == groups['aggregator'][0]
+
+- name: Deploy cluster
+  become: true
+  become_user: "{{ memsql.admin }}"
+  shell: "memsql-deploy setup-cluster --cluster-file {{ memsql.home }}/cluster/cluster-config.yaml --allow-duplicate-host-fingerprints -y &> {{ memsql.admin_home }}/cluster_install.log"
+  changed_when: false
+  when: inventory_hostname == groups['aggregator'][0] and cluster_port.stdout == "0"
+
+- name: Check cluster log
+  stat:
+    path: "{{ memsql.admin_home }}/cluster_install.log"
+  register: check_cluster_log
+
+- name: Copy cluster installation log
+  copy:
+    src: "{{ memsql.admin_home }}/cluster_install.log"
+    remote_src: yes
+    dest: "{{ memsql.home }}/cluster/cluster_install.log"
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+  when: inventory_hostname == groups['aggregator'][0] and check_cluster_log == True
+
+- name: Cleanup log file from MemSQL Admin user home
+  file:
+    path: "{{ memsql.admin_home }}/cluster_install.log"
+    state: absent
+  when: inventory_hostname == groups['aggregator'][0]
+
+- name: Configure default parittions per leaf | {{ default_partitions_per_leaf }}
+  shell: "memsqlctl update-config --all --set-global --key 'default_partitions_per_leaf' --value '{{ default_partitions_per_leaf }}' -y"
+  changed_when: false
+  when: inventory_hostname == groups['aggregator'][0]
+
+- name: Configure high availability mode | {{ ha_mode }}
+  shell: "memsqlctl update-config --all --set-global --key 'leaf_failover_fanout' --value '{{ ha_mode }}' -y"
+  changed_when: false
+  when: inventory_hostname == groups['aggregator'][0] and has_ha == true
+
+- name: Configure sync permissions
+  shell: "memsqlctl update-config --all --set-global --key 'sync_permissions' --value 'ON' -y"
+  changed_when: false
+  when: inventory_hostname == groups['aggregator'][0]
+
+- name: Configure SSL on Aggregators pt1
+  shell: |
+    memsqlctl update-config --key ssl_cert --value '{{ memsql.home }}/ssl/{{ cert_file }}'
+    memsqlctl update-config --key ssl_key --value '{{ memsql.home }}/ssl/{{ cert_key }}'
+  become_user: "{{ memsql.admin }}"
+  when: inventory_hostname in groups['aggregator'] and inventory_hostname != groups['aggregator'][0] and ssl == true
+
+- name: Configure SSL on Aggregators pt2
+  shell: "memsqlctl update-config --key ssl_ca --value '{{ memsql.home }}/ssl/{{ ca_cert_file }}'"
+  become_user: "{{ memsql.admin }}"
+  when: inventory_hostname in groups['aggregator'] and inventory_hostname != groups['aggregator'][0] and ssl_ca == true and ssl == true
+
+- name: Copy MemSQL service
+  copy:
+    src: "memsql.service"
+    dest: "/etc/systemd/system/memsql.service"
+    mode: '644'
+
+- name: Enable MemSQL Service
+  systemd:
+    name: "memsql"
+    enabled: yes
+    daemon_reload: yes
+    state: started
+
+- name: Stop MemSQL service to configure SSL
+  systemd:
+    name: "memsql"
+    state: stopped
+  when: ssl == true
+
+- name: Give MemSQL admin write privileges on Leaf nodes conf file
+  file:
+    path: "{{ memsql.home }}/Leaf1/memsql.cnf"
+    mode: '0644'
+  when: inventory_hostname in groups['leaf']
+
+- name: Correct MemSQL privileges pt1
+  file:
+    path: "/opt/{{ memsql.server_file.split('.x86_64.rpm')[0] }}"
+    recurse: yes
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+
+- name: Correct MemSQL privileges pt2
+  file:
+    path: "/opt/{{ memsql.server_file.split('.x86_64.rpm')[0] }}"
+    mode: '750'
+
+- name: Correct MemSQL privileges pt3
+  lineinfile:
+    path: /etc/sudoers
+    line: "{{ memsql.admin }} ALL=(ALL) NOPASSWD: ALL"
+    state: absent
+
+- name: Give MemSQL admin user sudo privileges
+  template:
+    src: "memsql_sudoers.j2"
+    dest: "/etc/sudoers.d/memsql"
+
+- name: Cluster file password cleanup
+  lineinfile:
+    path: "{{ memsql.home }}/cluster/cluster-config.yaml"
+    regexp: "^root_password:.*$"
+    state: absent
+  when: inventory_hostname == groups['aggregator'][0]
+
+- name: Start MemSQL service
+  systemd:
+    name: "memsql"
+    state: started
+
+- name: Copy bootstrap script
+  template:
+    src: "bootstrap.sql.j2"
+    dest: "{{ memsql.home }}/bootstrap.sql"
+    owner: "{{ memsql.user }}"
+    group: "{{ memsql.group }}"
+  when: inventory_hostname == groups['aggregator'][0]  
+
+- name: Check database
+  shell: "memsql -u root --password='{{ memsql_root_password }}' -e 'show databases;' | grep -cw {{ memsql_databases[0].name }}{{ memsql_environment }} || true"
+  changed_when: false
+  register: check_database
+  when: inventory_hostname == groups['aggregator'][0]
+
+- name: Execute bootstrap script
+  shell: "memsql -u root --password='{{ memsql_root_password }}' -e 'source {{ memsql.home }}/bootstrap.sql'"
+  when: inventory_hostname == groups['aggregator'][0] and check_database.stdout == "0"
+
+- name: Cleanup bootstrap script
+  file:
+    path: "{{ memsql.home }}/bootstrap.sql"
+    state: absent
+  when: inventory_hostname == groups['aggregator'][0]
+
+...

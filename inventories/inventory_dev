@@ -1,0 +1,20 @@
+[all:children]
+memsql
+
+[memsql:children]
+aggregator
+leaf
+
+[aggregator]
+memsql1
+
+[leaf]
+memsql2
+memsql3
+
+[multiple_leaf]
+
+[all:vars]
+ansible_connection=ssh
+ansible_ssh_user="{{ vault_ssh_user }}"
+ansible_ssh_pass="{{ vault_ssh_password }}"

@@ -1,0 +1,99 @@
+license: {{ license }}
+root_password: {{ memsql_root_password }}
+high_availability: {{ has_ha }}
+optimize: {{ optimize }}
+package_type: rpm
+{% if offline_install == false %}
+memsql_server_version: {{ memsql_version }}
+{% else %}
+memsql_server_file_path: "{{ memsql.home }}/packages/{{ memsql.server_file }}"
+{% endif %}
+hosts:
+{% for host in groups['aggregator'] -%}
+{% if host == groups['aggregator'][0] %}
+- hostname: {{ host }}
+  localhost: true
+  nodes:
+  - register: false
+    role: Master
+    config:
+      baseinstalldir: {{ memsql.home }}/Master
+      configpath: {{ memsql.home }}/Master/memsql.cnf
+      datadir: /opt/memsql/Master/data
+      auditlogsdir: /opt/memsql/Master/auditlogs
+      plancachedir: /opt/memsql/Master/plancache
+      tracelogsdir: /opt/memsql/Master/tracelogs
+      port: {{ memsql_port }}
+{% else %}
+- hostname: {{ host }}
+  localhost: false
+  ssh:
+    host: {{ host }}
+    user: {{ memsql.admin }}
+    private_key: {{ memsql.admin_home }}/.ssh/id_rsa_memsql
+  nodes:
+  - register: false
+    role: Aggregator
+    config:
+      baseinstalldir: {{ memsql.home }}/Aggregator
+      configpath: {{ memsql.home }}/Aggregator/memsql.cnf
+      datadir: /opt/memsql/Aggregator/data
+      auditlogsdir: /opt/memsql/Aggregator/auditlogs
+      plancachedir: /opt/memsql/Aggregator/plancache
+      tracelogsdir: /opt/memsql/Aggregator/tracelogs
+      port: {{ memsql_port }}
+{% endif %}
+{% endfor %}
+{% for host in groups['leaf'] -%}
+{% set counter = 1 %}
+{% set leaf_number = 1 %}
+{% if host != groups['aggregator'][0] %}
+- hostname: {{ host }}
+  localhost: false
+  ssh:
+    host: {{ host }}
+    user: {{ memsql.admin }}
+    private_key: {{ memsql.admin_home }}/.ssh/id_rsa_memsql
+  nodes:
+  - register: false
+    role: Leaf
+    config:
+      baseinstalldir: {{ memsql.home }}/Leaf{{ leaf_number }}
+      configpath: {{ memsql.home }}/Leaf{{ leaf_number }}/memsql.cnf
+      datadir: /opt/memsql/Leaf{{ leaf_number }}/data
+      auditlogsdir: /opt/memsql/Leaf{{ leaf_number }}/auditlogs
+      plancachedir: /opt/memsql/Leaf{{ leaf_number }}/plancache
+      tracelogsdir: /opt/memsql/Leaf{{ leaf_number }}/tracelogs
+      port: {{ memsql_port }}
+{% else %}
+{% set memsql_new_port = memsql_port|int + counter %}
+{% set counter = counter + 1 %}
+  - register: false
+    role: Leaf
+    config:
+      baseinstalldir: {{ memsql.home }}/Leaf{{ leaf_number }}
+      configpath: {{ memsql.home }}/Leaf{{ leaf_number }}/memsql.cnf
+      datadir: /opt/memsql/Leaf{{ leaf_number }}/data
+      auditlogsdir: /opt/memsql/Leaf{{ leaf_number }}/auditlogs
+      plancachedir: /opt/memsql/Leaf{{ leaf_number }}/plancache
+      tracelogsdir: /opt/memsql/Leaf{{ leaf_number }}/tracelogs
+      port: {{ memsql_new_port }}
+{% endif %}
+{% for mult_leaf in groups['multiple_leaf'] -%}
+{% if host == mult_leaf %}
+{% set memsql_new_port = memsql_port|int + counter %}
+{% set counter = counter + 1 %}
+{% set leaf_number = leaf_number + 1 %}
+  - register: false
+    role: Leaf
+    config:
+      baseinstalldir: {{ memsql.home }}/Leaf{{ leaf_number }}
+      configpath: {{ memsql.home }}/Leaf{{ leaf_number }}/memsql.cnf
+      datadir: /opt/memsql/Leaf{{ leaf_number }}/data
+      auditlogsdir: /opt/memsql/Leaf{{ leaf_number }}/auditlogs
+      plancachedir: /opt/memsql/Leaf{{ leaf_number }}/plancache
+      tracelogsdir: /opt/memsql/Leaf{{ leaf_number }}/tracelogs
+      port: {{ memsql_new_port }}
+{% endif %}
+{% endfor %}
+{% endfor %}

@@ -1,0 +1,62 @@
+---
+
+# Disks Setup
+dedicated_fs: true
+new_vg: true
+os_devices:
+  - /dev/sdb
+lv_name: memsql
+vg_name: memsql
+disk_path: "/dev/mapper/{{ vg_name }}-{{ lv_name }}"
+filesystem_type: "xfs"
+
+# MemSQL Pre-configuration
+memsql:
+  user: "memsql"
+  admin: "memsql-adm"
+  admin_password: "{{ vault_memsql_adm_password }}"
+  group: "memsql"
+  home: "/opt/memsql"
+  admin_home: "/home/memsql-adm"
+  server_file: "memsql-server-7.3.3-df463e2f33.x86_64.rpm"
+
+# MemSQL Studio
+config_memsql: True
+bindStudio: "0.0.0.0"
+portStudio: "8443"
+statePath: "/var/lib/memsql-studio/studio.hcl"
+logPath: "/var/lib/memsql-studio/studio.log"
+
+
+# SSL configuration
+ssl: true
+ssl_ca: false
+cert_file: "memsql_prod.crt"
+cert_key: "memsql_prod.key"
+ca_cert_file: "ca_cert.pem"
+
+# MemSQL Installation variables
+offline_install: true
+memsql_version: 7.3
+has_ha: true
+ha_mode: "load_balanced"
+memsql_port: 3306
+memsql_root_password: "{{ vault_memsql_root_password }}"
+optimize: true
+default_partitions_per_leaf: "{{ (ansible_facts['processor_vcpus'] / 4)|int }}"
+license: "{{ vault_license }}"
+
+# MemSQL Databases, Users, Groups and Roles creation
+memsql_environment: "PROD"
+memsql_databases:
+  - name: "TNR"
+    password: "{{ vault_tnr_db_password }}"
+    studio_password: "{{ vault_tnr_studio_password }}"
+  - name: "B2B"
+    password: "{{ vault_b2b_db_password }}"
+    studio_password: "{{ vault_b2b_studio_password }}"
+  - name: "B2C"
+    password: "{{ vault_b2c_db_password }}"
+    studio_password: "{{ vault_b2c_studio_password }}"
+
+...

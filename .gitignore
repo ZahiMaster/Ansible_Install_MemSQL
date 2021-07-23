@@ -1,0 +1,10 @@
+group_vars/all/vault.yaml
+group_vars/all/.vars.yml.swp
+roles/memsql/files/add_certs_and_packages_here
+roles/memsql/files/ca_tnr.crt
+roles/memsql/files/id_rsa_memsql
+roles/memsql/files/id_rsa_memsql.pub
+roles/memsql/files/memsql_prod.crt
+roles/memsql/files/memsql_prod.key
+roles/memsql/files/*.rpm
+.vault_pass.txt

@@ -1,0 +1,21 @@
+{% for database in memsql_databases -%}
+CREATE DATABASE {{ database.name }}{{ memsql_environment }};
+CREATE USER '{{ database.name|lower }}_admin'@'%' IDENTIFIED BY '{{ database.password }}' REQUIRE SSL;
+CREATE GROUP 'group_{{ database.name|lower }}_admin';
+CREATE ROLE 'role_{{ database.name|lower }}_admin' WITH FAILED_LOGIN_ATTEMPTS = 5 PASSWORD_LOCK_TIME = 3600;
+GRANT GROUP 'group_{{ database.name|lower }}_admin' TO '{{ database.name|lower }}_admin'@'%';
+GRANT ROLE 'role_{{ database.name|lower }}_admin' to 'group_{{ database.name|lower }}_admin';
+GRANT ALL PRIVILEGES ON {{ database.name }}{{ memsql_environment }}.* TO ROLE 'role_{{ database.name|lower }}_admin' WITH GRANT OPTION;
+{% endfor %}
+CREATE USER 'memsqldba'@'%' IDENTIFIED BY '{{ vault_memsqldba_db_password }}' REQUIRE SSL;
+CREATE USER 'studiodba'@'%' IDENTIFIED BY '{{ vault_studiodba_db_password }}';
+CREATE GROUP 'group_memsql_dba';
+CREATE ROLE 'role_memsql_dba' WITH FAILED_LOGIN_ATTEMPTS = 5 PASSWORD_LOCK_TIME = 3600;
+GRANT GROUP 'group_memsql_dba' TO 'studiodba'@'%';
+GRANT GROUP 'group_memsql_dba' TO 'memsqldba'@'%';
+GRANT ROLE 'role_memsql_dba' to 'group_memsql_dba';
+GRANT ALL PRIVILEGES ON *.* TO ROLE 'role_memsql_dba' WITH GRANT OPTION;
+{% for database in memsql_databases -%}
+CREATE USER '{{ database.name|lower }}_studio'@'%' IDENTIFIED BY '{{ database.studio_password }}';
+GRANT GROUP 'group_{{ database.name|lower }}_admin' TO '{{ database.name|lower }}_studio'@'%';
+{% endfor %}
